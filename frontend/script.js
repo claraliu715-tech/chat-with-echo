@@ -55,55 +55,56 @@ document.addEventListener("DOMContentLoaded", () => {
     chatbox.scrollTop = chatbox.scrollHeight;
   }
 
-// ✅ render clickable "draft replies" (NOT bot messages)
-function appendOptions(options) {
-  if (!options || !Array.isArray(options)) return;
+  // ✅ render clickable "draft replies" (NOT bot messages)
+  function appendOptions(options) {
+    if (!options || !Array.isArray(options)) return;
 
-  const cleaned = options
-    .filter((t) => typeof t === "string" && t.trim().length > 0)
-    .slice(0, 3);
+    const cleaned = options
+      .filter((t) => typeof t === "string" && t.trim().length > 0)
+      .slice(0, 3);
 
-  if (cleaned.length === 0) return;
+    if (cleaned.length === 0) return;
 
-  const section = document.createElement("div");
-  section.classList.add("options-section");
+    const section = document.createElement("div");
+    section.classList.add("options-section");
 
-  const label = document.createElement("div");
-  label.className = "options-label";
-  label.textContent = "You could reply with:";
-  section.appendChild(label);
+    const label = document.createElement("div");
+    label.className = "options-label";
+    label.textContent = "Alternative drafts (click to fill input):";
+    section.appendChild(label);
 
-  const wrap = document.createElement("div");
-  wrap.classList.add("option-row");
+    const wrap = document.createElement("div");
+    wrap.classList.add("option-row");
 
-  cleaned.forEach((text) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "option-chip";
-    btn.textContent = text;
+    cleaned.forEach((text) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "option-chip";
+      btn.textContent = text;
 
-    btn.addEventListener("click", () => {
-      inputMessage.value = text; // 放进输入框（用户自己决定要不要发送）
-      inputMessage.focus();
+      btn.addEventListener("click", () => {
+        inputMessage.value = text; // 放进输入框（用户自己决定要不要发送）
+        inputMessage.focus();
+        inputMessage.setSelectionRange(inputMessage.value.length, inputMessage.value.length);
+      });
+
+      wrap.appendChild(btn);
     });
 
-    wrap.appendChild(btn);
-  });
-
-  section.appendChild(wrap);
-  chatbox.appendChild(section);
-  chatbox.scrollTop = chatbox.scrollHeight;
-}
-
+    section.appendChild(wrap);
+    chatbox.appendChild(section);
+    chatbox.scrollTop = chatbox.scrollHeight;
+  }
 
   /* ========= Welcome ========= */
-  appendMessage("Hi 👋 I’m Echo. Paste what they said to you, and I’ll draft a reply you can send. (Use Rewrite if you typed your own draft.)", "bot");
-
+  appendMessage(
+    "Hi 👋 I’m Echo. Paste what they said to you, and I’ll draft a reply you can send. (Use Rewrite if you typed your own draft.)",
+    "bot"
+  );
 
   /* ========= API ========= */
   // ✅ IMPORTANT: Render backend base URL
   const API_BASE = "";
-
 
   async function callEchoAPI({ message, mode = "chat" }) {
     // Timeout so UI won't hang forever
@@ -196,58 +197,57 @@ function appendOptions(options) {
   rewritePoliterBtn?.addEventListener("click", () => rewriteMessage("rewrite_politer"));
   rewriteConfidentBtn?.addEventListener("click", () => rewriteMessage("rewrite_confident"));
 
-  /* ========= Quick starters ========= */
+  /* ========= Quick starters (PROMPTS, not replies) ========= */
   function getStarterText(type, scenario, tone) {
     const isProf = scenario === "talking to a professor";
     const isFriend = scenario === "messaging a friend";
-    const polite = (tone || "").toLowerCase().includes("polite");
+    const isStranger = scenario === "replying to a stranger";
 
+    const who = isProf
+      ? "a professor"
+      : isFriend
+      ? "a friend"
+      : isStranger
+      ? "a stranger"
+      : "someone";
+
+    const t = (tone || "Calm").toLowerCase();
+
+    // Prompts = instructions, NOT ready-to-send replies
     if (type === "ask") {
-      if (isProf)
-        return polite
-          ? "Hi Professor, could I please ask a quick question about the deadline?"
-          : "Hi Professor, can I ask a quick question about the deadline?";
-      if (isFriend) return "Hey, quick question — are you free later?";
-      return "Hi, quick question — could you help me with something?";
+      return `Write a ${t} message to ${who} to ask a quick question about [topic]. Keep it short and natural.`;
     }
 
     if (type === "followup") {
-      if (isProf) return "Just following up on my message — thank you in advance.";
-      if (isFriend) return "Just checking in — no rush to reply.";
-      return "Just following up — let me know when you get a moment.";
+      return `Write a ${t} follow-up to ${who} about [what I’m waiting for]. Sound calm and not pushy.`;
     }
 
     if (type === "no") {
-      if (isProf)
-        return "Thanks for asking — I can’t do that, but I can suggest an alternative if helpful.";
-      if (isFriend) return "I can’t this time, sorry — could we do another day?";
-      return "Thanks for thinking of me, but I’ll have to pass this time.";
+      return `Write a ${t} message to ${who} to politely decline [request]. Offer an alternative if possible.`;
     }
 
     if (type === "clarify") {
-      if (isProf) return "Sorry, I may have misunderstood — could you clarify what you mean by this part?";
-      if (isFriend) return "Sorry, I explained that badly — what I meant was…";
-      return "Sorry if I wasn’t clear — what I mean is…";
+      return `Write a ${t} message to ${who}: briefly apologise and ask them to clarify [confusing part].`;
     }
 
     if (type === "friendly") {
-      if (isProf) return "Hi Professor, hope you’re doing well — I wanted to ask about…";
-      if (isFriend) return "Hey! Hope your week’s going okay 😊";
-      return "Hi! Hope you’re having a good day.";
+      return `Write a ${t} opening line to ${who} to start friendly, then smoothly lead into [main point].`;
     }
 
-    return "Hi — I wanted to say…";
+    return `Write a ${t} message to ${who} about [my situation].`;
   }
 
+  // ✅ IMPORTANT: starter pills ONLY fill input, DO NOT send
   starterPills?.addEventListener("click", (e) => {
     const btn = e.target.closest(".qs-pill");
     if (!btn) return;
 
     const type = btn.dataset.starter;
-    const draft = getStarterText(type, selectedScenario, selectedTone);
+    const promptText = getStarterText(type, selectedScenario, selectedTone);
 
-    inputMessage.value = draft;
+    inputMessage.value = promptText;
     inputMessage.focus();
+    inputMessage.setSelectionRange(inputMessage.value.length, inputMessage.value.length);
   });
 
   /* ========= Collapsible settings panel ========= */
