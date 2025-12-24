@@ -30,9 +30,6 @@ app.add_middleware(
 BACKEND_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BACKEND_DIR / "frontend"  # main.py 在根目录时
 
-# ✅ 挂载前端静态资源（/static/*）
-# 你的前端引用是 /static/style.css /static/script.js /static/logo.jpg
-# 所以这里挂载整个 frontend 目录为 /static 是合理的
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
@@ -75,8 +72,8 @@ You are Echo — a message drafting assistant.
 IMPORTANT ROLE RULE:
 - The user will either:
   (A) paste a message they RECEIVED from someone else, OR
-  (B) give you a writing PROMPT / instruction (e.g., "Write a calm message to...").
-- Your job is to produce a message the USER should SEND.
+  (B) type a writing PROMPT / intention (e.g., "ask about lecture", "follow up", "say no"),
+      and you must draft what the user should SEND.
 
 Strict rules:
 - Write ONLY the message the USER could send.
@@ -84,6 +81,7 @@ Strict rules:
 - Do NOT explain, analyse, or give advice.
 - Do NOT roleplay the other person.
 - Keep it short and natural.
+- IMPORTANT: Do NOT ask the user what they want. If details are missing, use ONE placeholder like [your question].
 
 JSON SAFETY RULES (IMPORTANT):
 - Output MUST be valid JSON only, nothing else.
@@ -137,42 +135,105 @@ JSON schema:
   "reply": "string",
   "options": ["string", "string", "string"]
 }}
-
-Meaning:
-- "reply": the best message the USER could send.
-- "options": up to 3 alternative messages the USER could send.
 """.strip()
-
 
 
 def looks_like_prompt_instruction(message: str) -> bool:
     """
-    Heuristic: if the message starts like a writing instruction, treat it as prompt (B).
-    This matches your starter pills (B) design.
+    Treat short intents (ask/follow up/say no...) as prompt-mode too.
+    This matches your UI where users may type quick intents.
     """
     m = (message or "").strip().lower()
-    starters = ("write a ", "rewrite ", "draft ", "generate ", "help me ")
+    starters = (
+        "write a ", "rewrite ", "draft ", "generate ", "help me ",
+        "ask ", "follow up", "follow-up", "followup",
+        "say no", "decline", "turn down",
+        "apologise", "apologize",
+        "start friendly", "clarify",
+        "please write", "can you write",
+    )
     return m.startswith(starters)
 
 
-def build_user_content(message: str, mode: str) -> str:
+def normalize_prompt_intent(message: str, scenario: str, tone: str) -> str:
+    """
+    Convert vague short intents into explicit drafting instructions so the model
+    outputs a ready-to-send message (not a question back to the user).
+    """
+    m = (message or "").strip()
+
+    # ask ... about <topic>
+    match = re.search(r"\bask\b.*\babout\b\s+(.+)$", m, flags=re.IGNORECASE)
+    if match:
+        topic = match.group(1).strip().rstrip(".!?")
+        return (
+            f"Write a {tone.lower()} message to {scenario} to ask about {topic}. "
+            f"Include ONE placeholder like [your question]. "
+            f"Do NOT ask the user what they want to ask. "
+            f"Return a ready-to-send message."
+        )
+
+    # follow up ...
+    if m.lower().startswith(("follow up", "follow-up", "followup")):
+        return (
+            f"Write a {tone.lower()} follow-up message to {scenario}. "
+            f"Include ONE placeholder like [what I’m following up on]. "
+            f"Sound calm and not pushy. "
+            f"Return a ready-to-send message."
+        )
+
+    # say no / decline ...
+    if m.lower().startswith(("say no", "decline", "turn down")):
+        return (
+            f"Write a {tone.lower()} message to {scenario} to politely decline. "
+            f"Include ONE placeholder like [request]. "
+            f"Optionally offer an alternative in one short sentence. "
+            f"Return a ready-to-send message."
+        )
+
+    # apologise + clarify ...
+    if m.lower().startswith(("apologise", "apologize", "clarify")):
+        return (
+            f"Write a {tone.lower()} message to {scenario} to briefly apologise and ask for clarification. "
+            f"Include ONE placeholder like [confusing part]. "
+            f"Return a ready-to-send message."
+        )
+
+    # start friendly ...
+    if m.lower().startswith("start friendly"):
+        return (
+            f"Write a {tone.lower()} friendly opening line to {scenario}, then smoothly lead into [main point]. "
+            f"Return a ready-to-send message."
+        )
+
+    # generic prompt-mode fallback
+    return (
+        f"Write a {tone.lower()} message to {scenario}. "
+        f"If details are missing, include ONE placeholder like [details]. "
+        f"Return a ready-to-send message. Do NOT ask the user questions."
+    )
+
+
+def build_user_content(message: str, mode: str, scenario: str, tone: str) -> str:
     message = (message or "").strip()
 
     if mode == "chat":
         if looks_like_prompt_instruction(message):
-            # Mode B: user gave a prompt/instruction
-           return f"""
+            normalized = normalize_prompt_intent(message, scenario, tone)
+
+            return f"""
 Task:
 You are NOT replying to the user.
 You are writing a message ON BEHALF OF the user,
 which the user will SEND TO ANOTHER PERSON.
 
 Write the exact message the user should send.
-Do NOT say you can help.
-Do NOT act as an assistant.
+If details are missing, use ONE placeholder like [your question].
+Do NOT ask the user for more details.
+Do NOT act as a service assistant.
 
 User instruction:
-{message}
+{normalized}
 """.strip()
 
         # Mode A: user pasted what they received
@@ -183,6 +244,7 @@ Message the user RECEIVED:
 {message}
 """.strip()
 
+    # rewrite modes
     if mode == "rewrite_shorter":
         task = "Rewrite the user's draft to be shorter without changing meaning."
     elif mode == "rewrite_politer":
@@ -208,10 +270,7 @@ def call_gemini(system_text: str, user_text: str) -> str:
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-    headers = {
-        "x-goog-api-key": api_key,
-        "Content-Type": "application/json",
-    }
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
 
     payload = {
         "systemInstruction": {"parts": [{"text": system_text}]},
@@ -224,14 +283,10 @@ def call_gemini(system_text: str, user_text: str) -> str:
                 "type": "object",
                 "properties": {
                     "reply": {"type": "string"},
-                    "options": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "maxItems": 3
-                    }
+                    "options": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
                 },
-                "required": ["reply"]
-            }
+                "required": ["reply"],
+            },
         },
     }
 
@@ -241,7 +296,6 @@ def call_gemini(system_text: str, user_text: str) -> str:
         raise HTTPException(status_code=500, detail=f"Could not reach Gemini: {repr(e)}")
 
     if r.status_code != 200:
-        # 这里不要直接抛一大段 raw，避免前端爆炸；截断即可
         raise HTTPException(status_code=500, detail=f"Gemini HTTP {r.status_code}: {r.text[:400]}")
 
     data = r.json()
@@ -259,7 +313,6 @@ def call_gemini(system_text: str, user_text: str) -> str:
 def extract_json(text: str) -> Dict[str, Any]:
     text = (text or "").strip()
 
-    # 1) strict JSON
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
@@ -267,7 +320,6 @@ def extract_json(text: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # 2) extract { ... }
     m = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if m:
         block = m.group(0).strip()
@@ -278,11 +330,8 @@ def extract_json(text: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 3) salvage reply (more tolerant)
-    # allow multiline match
     reply_match = re.search(r'"reply"\s*:\s*"(.+?)"', text, flags=re.DOTALL)
     reply = reply_match.group(1).strip() if reply_match else ""
-
     reply = reply.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
 
     if not reply:
@@ -297,26 +346,23 @@ def chat(req: ChatRequest):
     scenario = req.scenario or "general"
     mode = req.mode or "chat"
 
-    # ✅ MOCK 模式
     if USE_MOCK:
         return {
             "reply": "Just following up — let me know when you have a moment.",
             "options": [
                 "Checking in — feel free to reply when you’re free.",
                 "Just wanted to check in.",
-                "Let me know when you get a chance."
-            ]
+                "Let me know when you get a chance.",
+            ],
         }
 
     system_text = build_system_instruction(tone, scenario)
-    user_text = build_user_content(req.message, mode)
+    user_text = build_user_content(req.message, mode, scenario, tone)
 
-    # ✅ 任何异常都不让它 500（除非是你想调试）
     try:
         raw = call_gemini(system_text, user_text)
         obj = extract_json(raw)
     except Exception:
-        # 降级响应：避免前端隔一条就炸
         return {"reply": "Sorry — something went wrong generating the reply. Please try again.", "options": []}
 
     reply = (obj.get("reply") or "").strip()
@@ -327,3 +373,4 @@ def chat(req: ChatRequest):
     options = [str(x).strip() for x in options if str(x).strip()][:3]
 
     return {"reply": reply, "options": options}
+
