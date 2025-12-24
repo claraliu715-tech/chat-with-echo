@@ -1,23 +1,20 @@
 import os
+import json
+import re
+from pathlib import Path
+from typing import Optional, Literal, Dict, Any
+
+import requests
 from dotenv import load_dotenv
-
-load_dotenv()
-
-USE_MOCK = os.getenv("USE_MOCK", "false") == "true"
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Literal, Dict, Any
-from pathlib import Path
-import requests
-import json
-import re
 
+load_dotenv()
 
-
+USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
 
 app = FastAPI()
 
@@ -31,15 +28,13 @@ app.add_middleware(
 
 # ====== Paths ======
 BACKEND_DIR = Path(__file__).resolve().parent
-# 你的设计：仓库根目录 /frontend
-FRONTEND_DIR = BACKEND_DIR / "frontend"  # ✅ 根目录版（因为 main.py 在根目录）
-# 如果你坚持 main.py 在 backend/ 文件夹里，就用：BACKEND_DIR.parent / "frontend"
+FRONTEND_DIR = BACKEND_DIR / "frontend"  # main.py 在根目录时
 
-
-# ✅ 只有当目录存在时才挂载静态资源（Render 上没有也不会崩）
+# ✅ 挂载前端静态资源（/static/*）
+# 你的前端引用是 /static/style.css /static/script.js /static/logo.jpg
+# 所以这里挂载整个 frontend 目录为 /static 是合理的
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
-
 
 Mode = Literal["chat", "rewrite_shorter", "rewrite_politer", "rewrite_confident"]
 
@@ -62,7 +57,6 @@ def serve_index():
     if index_path.exists():
         return FileResponse(str(index_path))
 
-    # ✅ Render 只跑后端时，给一个不会报 500 的提示
     return JSONResponse(
         {
             "ok": True,
@@ -79,18 +73,23 @@ def build_system_instruction(tone: str, scenario: str) -> str:
 You are Echo — a message drafting assistant.
 
 IMPORTANT ROLE RULE:
-- The USER pastes a message they RECEIVED from someone else.
-- Your job is to write what the USER should SEND BACK.
+- The user will either:
+  (A) paste a message they RECEIVED from someone else, OR
+  (B) give you a writing PROMPT / instruction (e.g., "Write a calm message to...").
+- Your job is to produce a message the USER should SEND.
 
 Strict rules:
-- Write ONLY messages the USER could send.
+- Write ONLY the message the USER could send.
 - ALWAYS write in first person ("I", "Thanks", "Sure").
-- NEVER write the other person's reply.
-- NEVER continue the conversation as the other speaker.
-- NEVER say things like "Of course, what do you need?" unless the USER is the one saying it.
 - Do NOT explain, analyse, or give advice.
-- Do NOT ask questions unless the user's reply should be a question.
-- Each sentence should be short and natural.
+- Do NOT roleplay the other person.
+- Keep it short and natural.
+
+JSON SAFETY RULES (IMPORTANT):
+- Output MUST be valid JSON only, nothing else.
+- Do NOT include double quotes " inside reply/options text.
+  Use apostrophes (') instead if needed.
+- Keep strings single-line (avoid line breaks).
 
 Context:
 - Tone = {tone}
@@ -107,14 +106,36 @@ JSON schema:
 
 Meaning:
 - "reply": the best message the USER could send.
-- "options": 3 alternative messages the USER could send.
+- "options": up to 3 alternative messages the USER could send.
 """.strip()
 
 
+def looks_like_prompt_instruction(message: str) -> bool:
+    """
+    Heuristic: if the message starts like a writing instruction, treat it as prompt (B).
+    This matches your starter pills (B) design.
+    """
+    m = (message or "").strip().lower()
+    starters = ("write a ", "rewrite ", "draft ", "generate ", "help me ")
+    return m.startswith(starters)
+
+
 def build_user_content(message: str, mode: str) -> str:
+    message = (message or "").strip()
+
     if mode == "chat":
+        if looks_like_prompt_instruction(message):
+            # Mode B: user gave a prompt/instruction
+            return f"""
+Task: Follow the user's instruction and write a message the user can send.
+
+User instruction:
+{message}
+""".strip()
+
+        # Mode A: user pasted what they received
         return f"""
-Ttask = "Write what the user should send as a reply."
+Task: Write what the user should send as a reply.
 
 Message the user RECEIVED:
 {message}
@@ -136,8 +157,6 @@ User's DRAFT message to rewrite:
 """.strip()
 
 
-
-
 # ========== Gemini caller ==========
 def call_gemini(system_text: str, user_text: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -155,24 +174,23 @@ def call_gemini(system_text: str, user_text: str) -> str:
     payload = {
         "systemInstruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
-       "generationConfig": {
-    "temperature": 0.15,
-    "maxOutputTokens": 800,
-    "responseMimeType": "application/json",
-    "responseSchema": {
-        "type": "object",
-        "properties": {
-            "reply": {"type": "string"},
-            "options": {
-                "type": "array",
-                "items": {"type": "string"},
-                "maxItems": 3
+        "generationConfig": {
+            "temperature": 0.15,
+            "maxOutputTokens": 800,
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "object",
+                "properties": {
+                    "reply": {"type": "string"},
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 3
+                    }
+                },
+                "required": ["reply"]
             }
         },
-        "required": ["reply"]
-    }
-},
-
     }
 
     try:
@@ -181,7 +199,8 @@ def call_gemini(system_text: str, user_text: str) -> str:
         raise HTTPException(status_code=500, detail=f"Could not reach Gemini: {repr(e)}")
 
     if r.status_code != 200:
-        raise HTTPException(status_code=500, detail=f"Gemini HTTP {r.status_code}: {r.text[:800]}")
+        # 这里不要直接抛一大段 raw，避免前端爆炸；截断即可
+        raise HTTPException(status_code=500, detail=f"Gemini HTTP {r.status_code}: {r.text[:400]}")
 
     data = r.json()
 
@@ -192,13 +211,13 @@ def call_gemini(system_text: str, user_text: str) -> str:
             raise ValueError("Empty Gemini response")
         return text
     except Exception:
-        raise HTTPException(status_code=500, detail=f"Unexpected Gemini response structure: {data}")
+        raise HTTPException(status_code=500, detail=f"Unexpected Gemini response structure: {str(data)[:400]}")
 
 
 def extract_json(text: str) -> Dict[str, Any]:
     text = (text or "").strip()
 
-    # 1) First try: strict JSON
+    # 1) strict JSON
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
@@ -206,7 +225,7 @@ def extract_json(text: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # 2) Try to extract the largest {...} block
+    # 2) extract { ... }
     m = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if m:
         block = m.group(0).strip()
@@ -215,18 +234,16 @@ def extract_json(text: str) -> Dict[str, Any]:
             if isinstance(obj, dict):
                 return obj
         except Exception:
-            # fall through
             pass
 
-    # 3) Fallback: salvage "reply" with regex, ignore options if broken
-    reply_match = re.search(r'"reply"\s*:\s*"([^"]*)"', text)
-    reply = reply_match.group(1) if reply_match else ""
+    # 3) salvage reply (more tolerant)
+    # allow multiline match
+    reply_match = re.search(r'"reply"\s*:\s*"(.+?)"', text, flags=re.DOTALL)
+    reply = reply_match.group(1).strip() if reply_match else ""
 
-    # Basic unescape for common sequences
     reply = reply.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
 
     if not reply:
-        # absolute fallback: return a safe message, avoid 500
         return {"reply": "Sorry — I couldn’t format a clean JSON response. Please try again.", "options": []}
 
     return {"reply": reply, "options": []}
@@ -238,7 +255,7 @@ def chat(req: ChatRequest):
     scenario = req.scenario or "general"
     mode = req.mode or "chat"
 
-    # ✅ MOCK 模式：不调用 Gemini
+    # ✅ MOCK 模式
     if USE_MOCK:
         return {
             "reply": "Just following up — let me know when you have a moment.",
@@ -252,8 +269,13 @@ def chat(req: ChatRequest):
     system_text = build_system_instruction(tone, scenario)
     user_text = build_user_content(req.message, mode)
 
-    raw = call_gemini(system_text, user_text)
-    obj = extract_json(raw)  # ✅ 一定要在函数里并且正确缩进
+    # ✅ 任何异常都不让它 500（除非是你想调试）
+    try:
+        raw = call_gemini(system_text, user_text)
+        obj = extract_json(raw)
+    except Exception:
+        # 降级响应：避免前端隔一条就炸
+        return {"reply": "Sorry — something went wrong generating the reply. Please try again.", "options": []}
 
     reply = (obj.get("reply") or "").strip()
     if not reply:
