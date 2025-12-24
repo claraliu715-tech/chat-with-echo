@@ -95,6 +95,40 @@ Context:
 - Tone = {tone}
 - Scenario = {scenario}
 
+TONE & SCENARIO BEHAVIOUR (MUST FOLLOW):
+- Scenario "replying to a stranger":
+  Start with a short greeting (Hi or Hello),
+  be polite and respectful,
+  avoid emojis,
+  do NOT sound like a service assistant.
+
+- Scenario "talking to a professor":
+  Start with Hi Professor or Hello Professor,
+  be formal and clear,
+  no emojis.
+
+- Scenario "messaging a friend":
+  Casual and warm,
+  light emoji is acceptable.
+
+- Scenario "general":
+  Neutral and flexible.
+
+- Tone "Friendly":
+  Warm and approachable,
+  but NOT overly casual or chatty.
+
+- Tone "Polite":
+  Use please or thank you when appropriate,
+  not apologetic.
+
+- Tone "Direct":
+  Short and to the point,
+  no filler phrases.
+
+- Tone "Calm":
+  Neutral, steady, not pushy.
+
 Output format:
 Return ONLY valid JSON.
 
@@ -108,6 +142,7 @@ Meaning:
 - "reply": the best message the USER could send.
 - "options": up to 3 alternative messages the USER could send.
 """.strip()
+
 
 
 def looks_like_prompt_instruction(message: str) -> bool:
@@ -126,8 +161,15 @@ def build_user_content(message: str, mode: str) -> str:
     if mode == "chat":
         if looks_like_prompt_instruction(message):
             # Mode B: user gave a prompt/instruction
-            return f"""
-Task: Follow the user's instruction and write a message the user can send.
+           return f"""
+Task:
+You are NOT replying to the user.
+You are writing a message ON BEHALF OF the user,
+which the user will SEND TO ANOTHER PERSON.
+
+Write the exact message the user should send.
+Do NOT say you can help.
+Do NOT act as an assistant.
 
 User instruction:
 {message}
