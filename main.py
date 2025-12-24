@@ -196,20 +196,40 @@ def call_gemini(system_text: str, user_text: str) -> str:
 
 
 def extract_json(text: str) -> Dict[str, Any]:
-    text = text.strip()
+    text = (text or "").strip()
 
+    # 1) First try: strict JSON
     try:
-        return json.loads(text)
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
     except Exception:
         pass
 
+    # 2) Try to extract the largest {...} block
     m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        raise HTTPException(status_code=500, detail=f"Model did not return JSON. Raw: {text[:500]}")
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        raise HTTPException(status_code=500, detail=f"Bad JSON from model. Raw: {text[:500]}")
+    if m:
+        block = m.group(0).strip()
+        try:
+            obj = json.loads(block)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            # fall through
+            pass
+
+    # 3) Fallback: salvage "reply" with regex, ignore options if broken
+    reply_match = re.search(r'"reply"\s*:\s*"([^"]*)"', text)
+    reply = reply_match.group(1) if reply_match else ""
+
+    # Basic unescape for common sequences
+    reply = reply.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+
+    if not reply:
+        # absolute fallback: return a safe message, avoid 500
+        return {"reply": "Sorry — I couldn’t format a clean JSON response. Please try again.", "options": []}
+
+    return {"reply": reply, "options": []}
 
 
 @app.post("/chat")
@@ -229,18 +249,17 @@ def chat(req: ChatRequest):
             ]
         }
 
-    # ===== 真·Gemini 调用（等 quota 恢复再用）=====
     system_text = build_system_instruction(tone, scenario)
     user_text = build_user_content(req.message, mode)
 
     raw = call_gemini(system_text, user_text)
-    obj = extract_json(raw)
+    obj = extract_json(raw)  # ✅ 一定要在函数里并且正确缩进
 
     reply = (obj.get("reply") or "").strip()
     if not reply:
-        raise HTTPException(status_code=500, detail="Empty reply")
+        reply = "Sorry — I couldn’t generate a clean reply. Please try again."
 
     options = obj.get("options") or []
-    options = [str(x).strip() for x in options][:3]
+    options = [str(x).strip() for x in options if str(x).strip()][:3]
 
     return {"reply": reply, "options": options}
