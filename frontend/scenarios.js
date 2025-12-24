@@ -64,7 +64,7 @@ document.addEventListener("DOMContentLoaded", () => {
       e.stopPropagation();
       const scenario = btn.dataset.scenario || "general";
       localStorage.setItem("echo_scenario", scenario);
-      window.location.href = "index.html";
+    window.location.href = new URL("index.html", window.location.href).toString();
     });
   });
 });

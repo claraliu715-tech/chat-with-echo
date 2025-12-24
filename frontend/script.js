@@ -270,3 +270,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   inputMessage?.addEventListener("focus", closePanel);
 });
+document.addEventListener("DOMContentLoaded", () => {
+  const backBtn = document.getElementById("backToScenarios");
+
+  if (backBtn) {
+    backBtn.addEventListener("click", () => {
+      window.location.href = "/static/Scenarios.html";
+    });
+  }
+});
