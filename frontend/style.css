@@ -621,7 +621,7 @@ body.chat-page .chatbox{
   border-radius: 14px;
   border: 1px dashed #cbd5e1;
   background: #f8fafc;
-  color: #2563eb;
+  color: hsl(193, 32%, 46%);
   font-size: 14px;
   cursor: pointer;
 }
