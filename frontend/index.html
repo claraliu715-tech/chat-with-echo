@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Title of the webpage shown on the browser tab -->
+    <title>Chat with Echo</title>
+    
+    <!-- Link to external CSS stylesheet  -->
+    <link rel="stylesheet" href="/static/style.css" />
+    
+    <!-- Link to Font Awesome CDN for icons -->
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+</head>
+<body class="chat-page">
+    <!-- Main container holding all chat elements -->
+    <div class="container">
+
+        <!-- Header section of the chat -->
+        <header class="chat-header">
+            <div class="bot-info">
+                <!-- Logo image for the bot -->
+                <img src="/static/logo.jpg" alt="Chat with Echo" class="bot-header-logo">
+                <!-- Bot title -->
+                <h3>Chat with Echo</h3>
+            </div>
+        </header>
+
+ <!-- Controls: tone + scenario + rewrite -->
+<div class="controls-wrap">
+
+  <!-- Toggle button -->
+  <button class="controls-toggle" id="toggleSettings"
+          aria-expanded="false" aria-controls="settingsPanel" type="button">
+    <span class="toggle-icon">⚙</span>
+    <span class="toggle-text">Conversation settings</span>
+    <span class="toggle-caret" aria-hidden="true">▾</span>
+  </button>
+
+  <!-- Collapsible panel -->
+  <div class="controls" id="settingsPanel" hidden>
+
+    <!-- Tone pills -->
+    <div class="pill-group">
+      <span class="pill-label">Tone</span>
+      <div class="pills" id="tonePills">
+        <button class="pill active" data-value="Calm">Calm</button>
+        <button class="pill" data-value="Friendly">Friendly</button>
+        <button class="pill" data-value="Polite">Polite</button>
+        <button class="pill" data-value="Direct">Direct</button>
+      </div>
+    </div>
+
+    <!-- Scenario pills -->
+    <div class="pill-group">
+      <span class="pill-label">Scenario</span>
+      <div class="pills" id="scenarioPills">
+        <button class="pill active" data-value="general">General</button>
+        <button class="pill" data-value="talking to a professor">Professor</button>
+        <button class="pill" data-value="messaging a friend">Friend</button>
+        <button class="pill" data-value="replying to a stranger">Stranger</button>
+      </div>
+    </div>
+
+    <!-- Rewrite -->
+    <div class="pill-group">
+      <span class="pill-label">Rewrite</span>
+      <div class="rewrite-row">
+        <button id="rewriteShorter" type="button">Shorter</button>
+        <button id="rewritePoliter" type="button">Politer</button>
+        <button id="rewriteConfident" type="button">More confident</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+
+        <!-- Chatbox div where messages will be dynamically added -->
+        <div id="chatbox" class="chatbox">
+        </div>
+
+        <!-- Input area for user to type message and send -->
+        <div class="input-area">
+            <!-- Text input field for typing messages -->
+            <input id="inputMessage" type="text" placeholder="Type a message..." autocomplete="off" />
+            <!-- Send button with paper plane icon -->
+            <button id="sendBtn">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+        <div class="quick-starters">
+  <div class="qs-label">Need a starting line?</div>
+
+  <div class="qs-pills" id="starterPills">
+    <button class="qs-pill" data-starter="ask">Ask a question</button>
+    <button class="qs-pill" data-starter="followup">Follow up</button>
+    <button class="qs-pill" data-starter="no">Say no</button>
+    <button class="qs-pill" data-starter="clarify">Apologise + clarify</button>
+    <button class="qs-pill" data-starter="friendly">Start friendly</button>
+  </div>
+</div>
+        
+    </div>
+<!-- Quick starters (embedded scripts) -->
+
+
+    <!-- Link to external JavaScript file (commented out for now) -->
+    <script src="/static/script.js"></script>
+</body>
+</html>
